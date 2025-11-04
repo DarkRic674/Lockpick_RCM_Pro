@@ -47,5 +47,7 @@
 void dump_keys();
 int save_mariko_partial_keys(u32 start, u32 count, bool append);
 void derive_amiibo_keys();
+bool derive_bis_keys_silently();
+void dump_prodinfo_after_keys();
 
 #endif

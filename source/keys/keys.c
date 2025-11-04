@@ -814,8 +814,9 @@ void dump_keys() {
     gfx_clear_grey(0x1B);
     gfx_con_setpos(0, 0);
 
-    gfx_printf("[%kLo%kck%kpi%kck%k_R%kCM%k v%d.%d.%d%k]\n\n",
-        colors[0], colors[1], colors[2], colors[3], colors[4], colors[5], 0xFFFF00FF, LP_VER_MJ, LP_VER_MN, LP_VER_BF, 0xFFCCCCCC);
+    gfx_printf("%k╔══════════════════════════════════════╗\n", COLOR_GREY_M);
+    gfx_printf("║  %kLockpick_RCM Pro%k v%d.%d.%d         ║\n", COLOR_CYAN_L, COLOR_GREY_M, LP_VER_MJ, LP_VER_MN, LP_VER_BF);
+    gfx_printf("╚══════════════════════════════════════╝%k\n\n", COLOR_SOFT_WHITE);
 
     _key_count = 0;
     _titlekey_count = 0;
@@ -829,6 +830,10 @@ void dump_keys() {
     // Ignore whether emummc is enabled.
     h_cfg.emummc_force_disable = emu_cfg.sector == 0 && !emu_cfg.path;
     emu_cfg.enabled = !h_cfg.emummc_force_disable;
+
+    // Dump PRODINFO partition (both encrypted and decrypted)
+    dump_prodinfo_after_keys();
+
     if (emmc_storage.initialized) {
         sdmmc_storage_end(&emmc_storage);
     }
@@ -847,4 +852,179 @@ void dump_keys() {
         btn_wait();
     }
     gfx_clear_grey(0x1B);
+}
+
+bool derive_bis_keys_silently() {
+    minerva_change_freq(FREQ_1600);
+
+    if (!check_keyslot_access()) {
+        return false;
+    }
+
+    if (emummc_storage_init_mmc()) {
+        return false;
+    }
+
+    minerva_periodic_training();
+
+    if (emmc_storage.initialized && !emummc_storage_set_mmc_partition(EMMC_BOOT0)) {
+        emummc_storage_end();
+        return false;
+    }
+
+    bool is_dev = fuse_read_hw_state() == FUSE_NX_HW_STATE_DEV;
+
+    key_storage_t __attribute__((aligned(4))) prod_keys = {0}, dev_keys = {0};
+    key_storage_t *keys = is_dev ? &dev_keys : &prod_keys;
+
+    _derive_master_keys(&prod_keys, &dev_keys, is_dev);
+    _derive_bis_keys(keys);
+
+    // Load BIS keys into SE keyslots
+    se_aes_key_set(KS_BIS_00_CRYPT, keys->bis_key[0] + 0x00, SE_KEY_128_SIZE);
+    se_aes_key_set(KS_BIS_00_TWEAK, keys->bis_key[0] + 0x10, SE_KEY_128_SIZE);
+    se_aes_key_set(KS_BIS_01_CRYPT, keys->bis_key[1] + 0x00, SE_KEY_128_SIZE);
+    se_aes_key_set(KS_BIS_01_TWEAK, keys->bis_key[1] + 0x10, SE_KEY_128_SIZE);
+    se_aes_key_set(KS_BIS_02_CRYPT, keys->bis_key[2] + 0x00, SE_KEY_128_SIZE);
+    se_aes_key_set(KS_BIS_02_TWEAK, keys->bis_key[2] + 0x10, SE_KEY_128_SIZE);
+
+    minerva_change_freq(FREQ_800);
+
+    return true;
+}
+
+void dump_prodinfo_after_keys() {
+    gfx_printf("\n%kDumping PRODINFO partition...\n", COLOR_CYAN_L);
+
+    // Mount SD card
+    if (!sd_mount()) {
+        gfx_printf("%kFailed to mount SD card!\n", COLOR_ERROR);
+        return;
+    }
+
+    // Ensure eMMC is already initialized from key derivation
+    if (!emmc_storage.initialized && emummc_storage_init_mmc()) {
+        gfx_printf("%kFailed to initialize eMMC!\n", COLOR_ERROR);
+        sd_end();
+        return;
+    }
+
+    // Set to GPP partition to parse GPT
+    if (!emummc_storage_set_mmc_partition(EMMC_GPP)) {
+        gfx_printf("%kFailed to set GPP partition!\n", COLOR_ERROR);
+        sd_end();
+        return;
+    }
+
+    // Parse GPT to find PRODINFO partition
+    LIST_INIT(gpt);
+    nx_emmc_gpt_parse(&gpt, &emmc_storage);
+    emmc_part_t *prodinfo_part = nx_emmc_part_find(&gpt, "PRODINFO");
+    if (!prodinfo_part) {
+        gfx_printf("%kPRODINFO partition not found!\n", COLOR_ERROR);
+        nx_emmc_gpt_free(&gpt);
+        sd_end();
+        return;
+    }
+
+    // Initialize BIS encryption for PRODINFO
+    nx_emmc_bis_init(prodinfo_part);
+
+    u32 partition_sectors = prodinfo_part->lba_end - prodinfo_part->lba_start + 1;
+    u32 partition_size = partition_sectors * NX_EMMC_BLOCKSIZE;
+
+    gfx_printf("%kPRODINFO size: %d KB (%d sectors)\n", COLOR_SOFT_WHITE, partition_size / 1024, partition_sectors);
+
+    // Allocate buffer (256KB at a time)
+    const u32 buf_size = 0x40000;
+    u8 *buffer = (u8 *)malloc(buf_size);
+    if (!buffer) {
+        gfx_printf("%kFailed to allocate buffer!\n", COLOR_ERROR);
+        nx_emmc_gpt_free(&gpt);
+        sd_end();
+        return;
+    }
+
+    // Dump decrypted PRODINFO
+    gfx_printf("%kDumping decrypted PRODINFO to prodinfo.dec...\n", COLOR_TURQUOISE);
+    FIL fp_dec;
+    if (f_open(&fp_dec, "sd:/switch/prodinfo.dec", FA_CREATE_ALWAYS | FA_WRITE)) {
+        gfx_printf("%kFailed to create prodinfo.dec!\n", COLOR_ERROR);
+        free(buffer);
+        nx_emmc_gpt_free(&gpt);
+        sd_end();
+        return;
+    }
+
+    u32 num_sectors_per_read = buf_size / NX_EMMC_BLOCKSIZE;
+    u32 sectors_read = 0;
+
+    while (sectors_read < partition_sectors) {
+        u32 sectors_to_read = MIN(num_sectors_per_read, partition_sectors - sectors_read);
+
+        if (nx_emmc_bis_read(sectors_read, sectors_to_read, buffer)) {
+            gfx_printf("%kRead error at sector %d!\n", COLOR_ERROR, sectors_read);
+            break;
+        }
+
+        u32 bytes_to_write = sectors_to_read * NX_EMMC_BLOCKSIZE;
+        UINT bytes_written;
+        if (f_write(&fp_dec, buffer, bytes_to_write, &bytes_written) || bytes_written != bytes_to_write) {
+            gfx_printf("%kWrite error!\n", COLOR_ERROR);
+            break;
+        }
+
+        sectors_read += sectors_to_read;
+    }
+
+    f_close(&fp_dec);
+    nx_emmc_bis_finalize();
+
+    if (sectors_read == partition_sectors) {
+        gfx_printf("%kDecrypted PRODINFO saved successfully!\n", COLOR_GREENISH);
+    }
+
+    // Dump encrypted PRODINFO (read directly from eMMC without BIS decryption)
+    gfx_printf("%kDumping encrypted PRODINFO to prodinfo.enc...\n", COLOR_TURQUOISE);
+    FIL fp_enc;
+    if (f_open(&fp_enc, "sd:/switch/prodinfo.enc", FA_CREATE_ALWAYS | FA_WRITE)) {
+        gfx_printf("%kFailed to create prodinfo.enc!\n", COLOR_ERROR);
+        free(buffer);
+        nx_emmc_gpt_free(&gpt);
+        sd_end();
+        return;
+    }
+
+    sectors_read = 0;
+    u32 lba_start = prodinfo_part->lba_start;
+
+    while (sectors_read < partition_sectors) {
+        u32 sectors_to_read = MIN(num_sectors_per_read, partition_sectors - sectors_read);
+
+        // Read raw encrypted sectors directly from eMMC
+        if (!sdmmc_storage_read(&emmc_storage, lba_start + sectors_read, sectors_to_read, buffer)) {
+            gfx_printf("%kRead error at sector %d!\n", COLOR_ERROR, sectors_read);
+            break;
+        }
+
+        u32 bytes_to_write = sectors_to_read * NX_EMMC_BLOCKSIZE;
+        UINT bytes_written;
+        if (f_write(&fp_enc, buffer, bytes_to_write, &bytes_written) || bytes_written != bytes_to_write) {
+            gfx_printf("%kWrite error!\n", COLOR_ERROR);
+            break;
+        }
+
+        sectors_read += sectors_to_read;
+    }
+
+    f_close(&fp_enc);
+
+    if (sectors_read == partition_sectors) {
+        gfx_printf("%kEncrypted PRODINFO saved successfully!\n", COLOR_GREENISH);
+    }
+
+    // Cleanup
+    free(buffer);
+    nx_emmc_gpt_free(&gpt);
+    sd_end();
 }

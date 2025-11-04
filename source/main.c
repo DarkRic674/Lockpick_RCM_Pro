@@ -34,11 +34,13 @@
 #include <soc/hw_init.h>
 #include "storage/emummc.h"
 #include "storage/nx_emmc.h"
+#include "storage/nx_emmc_bis.h"
 #include <storage/nx_sd.h>
 #include <storage/sdmmc.h>
 #include <utils/btn.h>
 #include <utils/dirlist.h>
 #include <utils/ini.h>
+#include <utils/list.h>
 #include <utils/sprintf.h>
 #include <utils/util.h>
 
@@ -309,28 +311,31 @@ void dump_amiibo_keys()
 	derive_amiibo_keys();
 }
 
+void dump_prodinfo();
+void restore_prodinfo();
+
 void dump_mariko_partial_keys();
 
 ment_t ment_partials[] = {
-	MDEF_BACK(colors[0]),
+	MDEF_BACK(COLOR_TURQUOISE),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("This dumps the results of writing zeros", colors[1]),
-	MDEF_CAPTION("over consecutive 32-bit portions of each", colors[1]),
-	MDEF_CAPTION("keyslot, the results of which can then", colors[1]),
-	MDEF_CAPTION("be bruteforced quickly on a computer", colors[1]),
-	MDEF_CAPTION("to recover keys from unreadable keyslots.", colors[1]),
+	MDEF_CAPTION("This dumps the results of writing zeros", COLOR_SOFT_WHITE),
+	MDEF_CAPTION("over consecutive 32-bit portions of each", COLOR_SOFT_WHITE),
+	MDEF_CAPTION("keyslot, the results of which can then", COLOR_SOFT_WHITE),
+	MDEF_CAPTION("be bruteforced quickly on a computer", COLOR_SOFT_WHITE),
+	MDEF_CAPTION("to recover keys from unreadable keyslots.", COLOR_SOFT_WHITE),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("This includes the Mariko KEK and BEK", colors[2]),
-	MDEF_CAPTION("as well as the unique SBK.", colors[2]),
+	MDEF_CAPTION("This includes the Mariko KEK and BEK", COLOR_SOFT_WHITE),
+	MDEF_CAPTION("as well as the unique SBK.", COLOR_SOFT_WHITE),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("These are not useful for most users", colors[3]),
-	MDEF_CAPTION("but are included for archival purposes.", colors[3]),
+	MDEF_CAPTION("These are not useful for most users", COLOR_SOFT_WHITE),
+	MDEF_CAPTION("but are included for archival purposes.", COLOR_SOFT_WHITE),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("Warning: this wipes keyslots!", colors[4]),
-	MDEF_CAPTION("The console must be completely restarted!", colors[4]),
-	MDEF_CAPTION("Modchip must run again to fix the keys!", colors[4]),
-	MDEF_CAPTION("---------------", colors[5]),
-	MDEF_HANDLER("Dump Mariko Partials", dump_mariko_partial_keys, colors[0]),
+	MDEF_CAPTION("Warning: this wipes keyslots!", COLOR_WARNING),
+	MDEF_CAPTION("The console must be completely restarted!", COLOR_WARNING),
+	MDEF_CAPTION("Modchip must run again to fix the keys!", COLOR_WARNING),
+	MDEF_CAPTION("---------------", COLOR_WHITE),
+	MDEF_HANDLER("Dump Mariko Partials", dump_mariko_partial_keys, COLOR_TURQUOISE),
 	MDEF_END()
 };
 
@@ -342,18 +347,20 @@ power_state_t STATE_REBOOT_RCM          = REBOOT_RCM;
 power_state_t STATE_REBOOT_BYPASS_FUSES = REBOOT_BYPASS_FUSES;
 
 ment_t ment_top[] = {
-	MDEF_HANDLER("Dump from SysNAND", dump_sysnand, colors[0]),
-	MDEF_HANDLER("Dump from EmuNAND", dump_emunand, colors[1]),
-	MDEF_CAPTION("---------------", colors[2]),
-	MDEF_HANDLER("Dump Amiibo Keys", dump_amiibo_keys, colors[3]),
-	MDEF_MENU("Dump Mariko Partials (requires reboot)", &menu_partials, colors[4]),
-	MDEF_CAPTION("---------------", colors[5]),
-	MDEF_HANDLER("Payloads...", launch_tools, colors[0]),
-	MDEF_HANDLER("Reboot to hekate", launch_hekate, colors[1]),
-	MDEF_CAPTION("---------------", colors[2]),
-	MDEF_HANDLER_EX("Reboot (OFW)", &STATE_REBOOT_BYPASS_FUSES, power_set_state_ex, colors[3]),
-	MDEF_HANDLER_EX("Reboot (RCM)", &STATE_REBOOT_RCM, power_set_state_ex, colors[4]),
-	MDEF_HANDLER_EX("Power off", &STATE_POWER_OFF, power_set_state_ex, colors[5]),
+	MDEF_HANDLER("Dump from SysMMC", dump_sysnand, COLOR_TURQUOISE),
+	MDEF_HANDLER("Dump from EmuMMC", dump_emunand, COLOR_TURQUOISE),
+	MDEF_CAPTION("---------------", COLOR_WHITE),
+	MDEF_HANDLER("Restore PRODINFO", restore_prodinfo, COLOR_TURQUOISE),
+	MDEF_CAPTION("---------------", COLOR_WHITE),
+	MDEF_HANDLER("Dump Amiibo Keys", dump_amiibo_keys, COLOR_TURQUOISE),
+	MDEF_MENU("Dump Mariko Partials (requires reboot)", &menu_partials, COLOR_TURQUOISE),
+	MDEF_CAPTION("---------------", COLOR_WHITE),
+	MDEF_HANDLER("Payloads...", launch_tools, COLOR_TURQUOISE),
+	MDEF_HANDLER("Reboot to hekate", launch_hekate, COLOR_TURQUOISE),
+	MDEF_CAPTION("---------------", COLOR_WHITE),
+	MDEF_HANDLER_EX("Reboot (OFW)", &STATE_REBOOT_BYPASS_FUSES, power_set_state_ex, COLOR_TURQUOISE),
+	MDEF_HANDLER_EX("Reboot (RCM)", &STATE_REBOOT_RCM, power_set_state_ex, COLOR_TURQUOISE),
+	MDEF_HANDLER_EX("Power off", &STATE_POWER_OFF, power_set_state_ex, COLOR_TURQUOISE),
 	MDEF_END()
 };
 
@@ -366,6 +373,330 @@ void grey_out_menu_item(ment_t *menu)
 	menu->handler = NULL;
 }
 
+void dump_prodinfo()
+{
+	gfx_clear_grey(0x1B);
+	gfx_con_setpos(0, 0);
+
+	gfx_printf("%kDumping PRODINFO partition...\n\n", colors[0]);
+
+	// Silently derive BIS keys and load them into SE keyslots
+	gfx_printf("%kDeriving BIS encryption keys...\n", colors[1]);
+	if (!derive_bis_keys_silently()) {
+		gfx_printf("%kFailed to derive BIS keys!\n", COLOR_RED);
+		gfx_printf("%kTry launching payload differently or check hardware.\n\n", COLOR_RED);
+		goto out_wait;
+	}
+	gfx_printf("%kBIS keys derived successfully.\n\n", colors[2]);
+
+	// Mount SD card
+	if (!sd_mount()) {
+		EPRINTF("Unable to mount SD card.");
+		goto out_wait;
+	}
+
+	// Initialize eMMC storage
+	gfx_printf("%kInitializing eMMC...\n", colors[4]);
+	if (emummc_storage_init_mmc()) {
+		EPRINTF("Unable to init MMC.");
+		goto out;
+	}
+
+	// Parse GPT to find PRODINFO partition
+	gfx_printf("%kParsing GPT...\n", colors[5]);
+	LIST_INIT(gpt);
+	nx_emmc_gpt_parse(&gpt, &emmc_storage);
+
+	emmc_part_t *prodinfo_part = nx_emmc_part_find(&gpt, "PRODINFO");
+	if (!prodinfo_part) {
+		EPRINTF("Unable to locate PRODINFO partition.");
+		nx_emmc_gpt_free(&gpt);
+		goto out;
+	}
+
+	// Initialize BIS encryption for PRODINFO
+	gfx_printf("%kInitializing BIS encryption...\n", colors[0]);
+	nx_emmc_bis_init(prodinfo_part);
+
+	// Calculate partition size
+	u32 partition_sectors = prodinfo_part->lba_end - prodinfo_part->lba_start + 1;
+	u32 partition_size = partition_sectors * NX_EMMC_BLOCKSIZE;
+
+	gfx_printf("%kPartition size: %d KB (%d sectors)\n", colors[1],
+		partition_size / 1024, partition_sectors);
+
+	// Create output directory
+	f_mkdir("sd:/switch");
+
+	// Open output file
+	FIL fp;
+	if (f_open(&fp, "sd:/switch/PRODINFO.bin", FA_CREATE_ALWAYS | FA_WRITE)) {
+		EPRINTF("Unable to create output file.");
+		nx_emmc_gpt_free(&gpt);
+		goto out;
+	}
+
+	// Allocate buffer for reading (256KB at a time)
+	const u32 buf_size = 0x40000; // 256KB
+	u8 *buffer = (u8 *)malloc(buf_size);
+	if (!buffer) {
+		EPRINTF("Unable to allocate buffer.");
+		f_close(&fp);
+		nx_emmc_gpt_free(&gpt);
+		goto out;
+	}
+
+	// Dump partition sector by sector with progress
+	gfx_printf("%kDumping PRODINFO...\n", colors[2]);
+	u32 num_sectors_per_read = buf_size / NX_EMMC_BLOCKSIZE;
+	u32 sectors_read = 0;
+	u32 prev_pct = 200;
+
+	while (sectors_read < partition_sectors) {
+		u32 sectors_to_read = MIN(num_sectors_per_read, partition_sectors - sectors_read);
+
+		// Read and decrypt sectors
+		if (nx_emmc_bis_read(sectors_read, sectors_to_read, buffer)) {
+			gfx_printf("%kRead error at sector %d.\n", COLOR_RED, sectors_read);
+			break;
+		}
+
+		// Write to file
+		u32 bytes_to_write = sectors_to_read * NX_EMMC_BLOCKSIZE;
+		UINT bytes_written;
+		if (f_write(&fp, buffer, bytes_to_write, &bytes_written) || bytes_written != bytes_to_write) {
+			gfx_printf("%kWrite error at sector %d.\n", COLOR_RED, sectors_read);
+			break;
+		}
+
+		sectors_read += sectors_to_read;
+
+		// Update progress
+		u32 pct = (sectors_read * 100) / partition_sectors;
+		if (pct != prev_pct && pct % 5 == 0) {
+			gfx_con_setpos(0, gfx_con.y);
+			gfx_printf("%kProgress: %d%%", colors[3], pct);
+			prev_pct = pct;
+		}
+	}
+
+	// Cleanup
+	free(buffer);
+	f_close(&fp);
+	nx_emmc_bis_finalize();
+	nx_emmc_gpt_free(&gpt);
+
+	if (sectors_read == partition_sectors) {
+		gfx_printf("\n%kPRODINFO dumped successfully to sd:/switch/PRODINFO.bin\n", COLOR_GREEN);
+	} else {
+		gfx_printf("\n%kPRODINFO dump incomplete!\n", COLOR_RED);
+	}
+
+out:
+	emummc_storage_end();
+	sd_end();
+
+out_wait:
+	gfx_printf("\n%kPress any button to return to menu.", colors[4]);
+	btn_wait();
+}
+
+void restore_prodinfo()
+{
+	gfx_clear_grey(0x1B);
+	gfx_con_setpos(0, 0);
+
+	gfx_printf("%kRestoring PRODINFO partition...\n\n", COLOR_ORANGE);
+	gfx_printf("%kWARNING: This will overwrite your PRODINFO!\n", COLOR_RED);
+	gfx_printf("%kMake sure you have a backup before proceeding!\n\n", COLOR_RED);
+	gfx_printf("%kPress VOL+ to continue or any other button to cancel.\n\n", colors[0]);
+
+	u8 btn = btn_wait();
+	if (btn != BTN_VOL_UP) {
+		gfx_printf("%kRestore cancelled.\n", colors[1]);
+		goto out_wait;
+	}
+
+	// Silently derive BIS keys and load them into SE keyslots
+	gfx_printf("%kDeriving BIS encryption keys...\n", colors[2]);
+	if (!derive_bis_keys_silently()) {
+		gfx_printf("%kFailed to derive BIS keys!\n", COLOR_RED);
+		gfx_printf("%kTry launching payload differently or check hardware.\n\n", COLOR_RED);
+		goto out_wait;
+	}
+	gfx_printf("%kBIS keys derived successfully.\n\n", colors[3]);
+
+	// Mount SD card
+	if (!sd_mount()) {
+		EPRINTF("Unable to mount SD card.");
+		goto out_wait;
+	}
+
+	// Check which PRODINFO file exists (prefer decrypted)
+	FIL fp;
+	bool is_encrypted = false;
+
+	// Try decrypted file first (prodinfo.dec)
+	if (f_open(&fp, "sd:/switch/prodinfo.dec", FA_READ) == FR_OK) {
+		is_encrypted = false;
+		gfx_printf("%kFound decrypted PRODINFO backup (prodinfo.dec)\n", COLOR_CYAN_L);
+	}
+	// Fall back to encrypted file (prodinfo.enc)
+	else if (f_open(&fp, "sd:/switch/prodinfo.enc", FA_READ) == FR_OK) {
+		is_encrypted = true;
+		gfx_printf("%kFound encrypted PRODINFO backup (prodinfo.enc)\n", COLOR_CYAN_L);
+		gfx_printf("%kWARNING: This file is encrypted and will be written as-is!\n", COLOR_WARNING);
+		gfx_printf("%kMake sure this came from the same console!\n\n", COLOR_WARNING);
+	}
+	// No backup found
+	else {
+		gfx_printf("%kNo PRODINFO backup found!\n", COLOR_ERROR);
+		gfx_printf("%kLooking for: prodinfo.dec or prodinfo.enc\n", COLOR_SOFT_WHITE);
+		gfx_printf("%kPlease dump PRODINFO first!\n", COLOR_SOFT_WHITE);
+		goto out;
+	}
+
+	// Get file size
+	u32 file_size = f_size(&fp);
+
+	// Initialize eMMC storage
+	gfx_printf("%kInitializing eMMC...\n", colors[5]);
+	if (emummc_storage_init_mmc()) {
+		EPRINTF("Unable to init MMC.");
+		f_close(&fp);
+		goto out;
+	}
+
+	// Parse GPT to find PRODINFO partition
+	gfx_printf("%kParsing GPT...\n", colors[0]);
+	LIST_INIT(gpt);
+	nx_emmc_gpt_parse(&gpt, &emmc_storage);
+
+	emmc_part_t *prodinfo_part = nx_emmc_part_find(&gpt, "PRODINFO");
+	if (!prodinfo_part) {
+		EPRINTF("Unable to locate PRODINFO partition.");
+		f_close(&fp);
+		nx_emmc_gpt_free(&gpt);
+		goto out;
+	}
+
+	// Initialize BIS encryption for PRODINFO
+	gfx_printf("%kInitializing BIS encryption...\n", colors[1]);
+	nx_emmc_bis_init(prodinfo_part);
+
+	// Calculate partition size
+	u32 partition_sectors = prodinfo_part->lba_end - prodinfo_part->lba_start + 1;
+	u32 partition_size = partition_sectors * NX_EMMC_BLOCKSIZE;
+
+	gfx_printf("%kPartition size: %d KB (%d sectors)\n", colors[2],
+		partition_size / 1024, partition_sectors);
+	gfx_printf("%kFile size: %d KB\n\n", colors[3], file_size / 1024);
+
+	// Verify file size matches partition
+	if (file_size != partition_size) {
+		gfx_printf("%kFile size mismatch!\n", COLOR_RED);
+		gfx_printf("%kExpected %d bytes, got %d bytes\n", COLOR_RED, partition_size, file_size);
+		f_close(&fp);
+		nx_emmc_gpt_free(&gpt);
+		goto out;
+	}
+
+	// Allocate buffer for writing (256KB at a time)
+	const u32 buf_size = 0x40000; // 256KB
+	u8 *buffer = (u8 *)malloc(buf_size);
+	if (!buffer) {
+		EPRINTF("Unable to allocate buffer.");
+		f_close(&fp);
+		nx_emmc_gpt_free(&gpt);
+		goto out;
+	}
+
+	// Restore partition sector by sector with progress
+	if (is_encrypted) {
+		gfx_printf("%kRestoring encrypted PRODINFO (raw write)...\n", colors[4]);
+	} else {
+		gfx_printf("%kRestoring decrypted PRODINFO (with encryption)...\n", colors[4]);
+	}
+
+	u32 num_sectors_per_write = buf_size / NX_EMMC_BLOCKSIZE;
+	u32 sectors_written = 0;
+	u32 prev_pct = 200;
+	u32 lba_start = prodinfo_part->lba_start;
+
+	while (sectors_written < partition_sectors) {
+		u32 sectors_to_write = MIN(num_sectors_per_write, partition_sectors - sectors_written);
+
+		// Read from file
+		u32 bytes_to_read = sectors_to_write * NX_EMMC_BLOCKSIZE;
+		UINT bytes_read;
+		if (f_read(&fp, buffer, bytes_to_read, &bytes_read) || bytes_read != bytes_to_read) {
+			gfx_printf("%kRead error at sector %d.\n", COLOR_RED, sectors_written);
+			break;
+		}
+
+		// Write sectors - encrypted files go directly, decrypted files get encrypted
+		if (is_encrypted) {
+			// Write raw encrypted data directly to eMMC
+			if (!sdmmc_storage_write(&emmc_storage, lba_start + sectors_written, sectors_to_write, buffer)) {
+				gfx_printf("%kWrite error at sector %d.\n", COLOR_RED, sectors_written);
+				break;
+			}
+		} else {
+			// Encrypt decrypted data and write to eMMC
+			if (nx_emmc_bis_write(sectors_written, sectors_to_write, buffer)) {
+				gfx_printf("%kWrite error at sector %d.\n", COLOR_RED, sectors_written);
+				break;
+			}
+		}
+
+		sectors_written += sectors_to_write;
+
+		// Update progress
+		u32 pct = (sectors_written * 100) / partition_sectors;
+		if (pct != prev_pct && pct % 5 == 0) {
+			gfx_con_setpos(0, gfx_con.y);
+			gfx_printf("%kProgress: %d%%", colors[5], pct);
+			prev_pct = pct;
+		}
+	}
+
+	// Cleanup
+	free(buffer);
+	f_close(&fp);
+	nx_emmc_bis_finalize();
+	nx_emmc_gpt_free(&gpt);
+
+	if (sectors_written == partition_sectors) {
+		gfx_printf("\n%kPRODINFO restored successfully!\n", COLOR_GREEN);
+		gfx_printf("%kYou should reboot your console now.\n", COLOR_ORANGE);
+	} else {
+		gfx_printf("\n%kPRODINFO restore incomplete!\n", COLOR_RED);
+		gfx_printf("%kYour PRODINFO may be corrupted!\n", COLOR_RED);
+	}
+
+out:
+	emummc_storage_end();
+	sd_end();
+
+out_wait:
+	gfx_printf("\n%kPress VOL+ to take a screenshot or press another button to return to menu.", colors[0]);
+
+	u32 btn_pressed = btn_wait();
+	if (btn_pressed & BTN_VOL_UP)
+	{
+		int save_fb_to_bmp();
+		int res = save_fb_to_bmp();
+		if (!res)
+			gfx_printf("\n%kScreenshot saved to sd:/switch/screenshot/\n", COLOR_CYAN_L);
+		else
+			gfx_printf("\n%kScreenshot failed!\n", COLOR_ERROR);
+
+		msleep(1000);
+		gfx_printf("%kPress any button to return to menu.", colors[0]);
+		btn_wait();
+	}
+}
+
 void dump_mariko_partial_keys()
 {
 	if (h_cfg.t210b01) {
@@ -373,9 +704,9 @@ void dump_mariko_partial_keys()
 		if (res == 0 || res == 3)
 		{
 			// Grey out dumping menu items as the keyslots have been invalidated.
-			grey_out_menu_item(&ment_top[0]);
-			grey_out_menu_item(&ment_top[1]);
-			grey_out_menu_item(&ment_top[4]);
+			grey_out_menu_item(&ment_top[0]); // Dump from SysMMC
+			grey_out_menu_item(&ment_top[1]); // Dump from EmuMMC
+			grey_out_menu_item(&ment_top[3]); // Restore PRODINFO
 			grey_out_menu_item(&ment_partials[18]);
 		}
 
@@ -433,24 +764,24 @@ void ipl_main()
 	// Grey out emummc option if not present.
 	if (h_cfg.emummc_force_disable)
 	{
-		grey_out_menu_item(&ment_top[1]);
+		grey_out_menu_item(&ment_top[1]); // Dump from EmuMMC
 	}
 
 	// Grey out reboot to RCM option if on Mariko or patched console.
 	if (h_cfg.t210b01 || h_cfg.rcm_patched)
 	{
-		grey_out_menu_item(&ment_top[10]);
+		grey_out_menu_item(&ment_top[12]); // Reboot (RCM)
 	}
 
 	// Grey out Mariko partial dump option on Erista.
 	if (!h_cfg.t210b01) {
-		grey_out_menu_item(&ment_top[4]);
+		grey_out_menu_item(&ment_top[6]); // Dump Mariko Partials
 	}
 
 	// Grey out reboot to hekate option if no update.bin found.
 	if (f_stat("bootloader/update.bin", NULL))
 	{
-		grey_out_menu_item(&ment_top[7]);
+		grey_out_menu_item(&ment_top[9]); // Reboot to hekate
 	}
 
 	minerva_change_freq(FREQ_800);

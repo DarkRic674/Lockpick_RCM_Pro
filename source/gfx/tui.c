@@ -21,6 +21,7 @@
 #include <power/max17050.h>
 #include <utils/btn.h>
 #include <utils/util.h>
+#include <libs/fatfs/ff.h>
 
 extern hekate_config h_cfg;
 
@@ -100,8 +101,8 @@ void *tui_do_menu(menu_t *menu)
 	{
 		gfx_con_setcol(0xFFCCCCCC, 1, 0xFF1B1B1B);
 		gfx_con_setpos(menu->x, menu->y);
-		gfx_printf("[%kLo%kck%kpi%kck%k_R%kCM%k v%d.%d.%d%k]\n\n",
-			colors[0], colors[1], colors[2], colors[3], colors[4], colors[5], 0xFFFF00FF, LP_VER_MJ, LP_VER_MN, LP_VER_BF, 0xFFCCCCCC);
+		gfx_printf("[%kLockpick_RCM Pro%k v%d.%d.%d%k]\n\n",
+			COLOR_WHITE, COLOR_WHITE, LP_VER_MJ, LP_VER_MN, LP_VER_BF, COLOR_SOFT_WHITE);
 
 		// Skip caption or seperator lines selection.
 		while (menu->ents[idx].type == MENT_CAPTION ||
@@ -152,14 +153,39 @@ void *tui_do_menu(menu_t *menu)
 		// Print help and battery status.
 		gfx_con_setpos(0,  1127);
 		if (h_cfg.emummc_force_disable)
-			gfx_printf("%kNo emuMMC config found.\n", 0xFF800000);
+			gfx_printf("%kNo emuMMC config found.\n", COLOR_RED_D);
 		gfx_con_setpos(0,  1191);
-		gfx_printf("%k VOL: Move up/down\n PWR: Select option%k", 0xFF555555, 0xFFCCCCCC);
+		gfx_printf("%k VOL: Move | PWR: Select | VOL+-: Screenshot%k", COLOR_GREY_M, COLOR_SOFT_WHITE);
 
 		display_backlight_brightness(h_cfg.backlight, 1000);
 
 		// Wait for user command.
 		u32 btn = btn_wait();
+
+		// Check for VOL+ and VOL- pressed together for screenshot
+		if (btn == (BTN_VOL_UP | BTN_VOL_DOWN))
+		{
+			// Create screenshot directory if it doesn't exist
+			f_mkdir("sd:/switch");
+			f_mkdir("sd:/switch/screenshot");
+
+			int save_fb_to_bmp();
+			int res = save_fb_to_bmp();
+			u32 cx, cy;
+			gfx_con_getpos(&cx, &cy);
+			gfx_con_setpos(0, 1191);
+			if (!res) {
+				gfx_printf("%kScreenshot saved to sd:/switch/screenshot/%k           ", COLOR_CYAN_L, COLOR_SOFT_WHITE);
+			} else {
+				gfx_printf("%kScreenshot failed!%k                                     ", COLOR_ERROR, COLOR_SOFT_WHITE);
+			}
+			msleep(2000);
+			gfx_con_setpos(0, 1191);
+			gfx_printf("%k  VOL: Move  |  PWR: Select  |  VOL+&-: Screenshot%k", COLOR_GREY_M, COLOR_SOFT_WHITE);
+			gfx_con_setpos(cx, cy);
+			gfx_clear_partial_grey(0x1B, 0, 1256);
+			continue;
+		}
 
 		if (btn & BTN_VOL_DOWN && idx < (cnt - 1))
 			idx++;

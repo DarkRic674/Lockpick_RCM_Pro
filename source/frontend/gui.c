@@ -19,6 +19,7 @@
 #include <rtc/max77620-rtc.h>
 #include <storage/nx_sd.h>
 #include <utils/util.h>
+#include <utils/sprintf.h>
 
 #include <string.h>
 
@@ -81,8 +82,15 @@ int save_fb_to_bmp()
 	sd_mount();
 
 	f_mkdir("sd:/switch");
-	
-	char path[0x80] = "sd:/switch/lockpick_rcm.bmp";
+	f_mkdir("sd:/switch/screenshot");
+
+	// Generate unique filename with RTC timestamp
+	rtc_time_t time;
+	max77620_rtc_get_time(&time);
+
+	char path[0x80];
+	s_printf(path, "sd:/switch/screenshot/lockpick_rcm_%04d%02d%02d_%02d%02d%02d.bmp",
+		time.year, time.month, time.day, time.hour, time.min, time.sec);
 
 	// Save screenshot and log.
 	int res = sd_save_to_file(bitmap, file_size, path);
