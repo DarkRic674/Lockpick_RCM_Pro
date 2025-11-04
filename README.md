@@ -1,6 +1,10 @@
 
 # Lockpick_RCM_Pro
 
+<p align="center">
+  <img src="images/preview.bmp" alt="Lockpick_RCM_Pro Preview" width="65%">
+</p>
+
 Lockpick_RCM_Pro is an enhanced bare-metal payload that extracts encryption keys and dumps PRODINFO for use in file handling software like **hactool**, **hactoolnet/LibHac**, **ChoiDujour**, etc., all without booting into Horizon OS.
 
 > **Based on** [Lockpick_RCMaster](https://github.com/THZoria/Lockpick_RCMaster) by THZoria
