@@ -21,8 +21,9 @@ Lockpick_RCM_Pro is an enhanced bare-metal payload that extracts encryption keys
 3. Files will be saved to your SD card:
    - `/switch/prod.keys` - Production keys
    - `/switch/title.keys` - Title keys
-   - `/switch/prodinfo.enc` - Encrypted PRODINFO partition backup
-   - `/switch/prodinfo.dec` - Decrypted PRODINFO (for backup/analysis)
+   - `/backup/[emmcID]/partitions/PRODINFO` - Hekate-compatible backup (encrypted)
+   - `/backup/[emmcID]/dumps/prodinfo.enc` - Encrypted PRODINFO archive
+   - `/backup/[emmcID]/dumps/prodinfo.dec` - Decrypted PRODINFO archive
    - `/switch/screenshot/lockpick_rcm_YYYYMMDD_HHMMSS.bmp` - Screenshots (optional)
 
 > This release also includes the Falcon keygen from [Atmosphère-NX](https://github.com/Atmosphere-NX/Atmosphere).
@@ -30,9 +31,23 @@ Lockpick_RCM_Pro is an enhanced bare-metal payload that extracts encryption keys
 ## Enhanced Features
 
 ### PRODINFO Backup
-Lockpick_RCM_Pro automatically backs up your PRODINFO partition during key extraction:
-- **Encrypted backup** (`prodinfo.enc`) - Raw encrypted partition data
-- **Decrypted backup** (`prodinfo.dec`) - Decrypted data for analysis/restoration
+Lockpick_RCM_Pro automatically backs up your PRODINFO partition during key extraction using a Hekate-compatible folder structure:
+
+**Backup Structure:**
+```
+backup/[emmcID]/
+├── partitions/
+│   └── PRODINFO          (Encrypted - Hekate compatible)
+└── dumps/
+    ├── prodinfo.enc      (Encrypted - NXNandManager compatible)
+    └── prodinfo.dec      (Decrypted - for analysis)
+```
+
+**Features:**
+- **Device ID separation** - Each device has its own folder (matches Hekate's format)
+- **Hekate compatible** - `partitions/PRODINFO` can be restored using Hekate
+- **NXNandManager compatible** - `.enc`/`.dec` files for analysis tools
+- **Automatic migration** - Old backups from `/switch/` are automatically migrated
 
 > **Important:** Keep these files safe! PRODINFO contains device-unique calibration data and certificates that cannot be regenerated if lost.
 

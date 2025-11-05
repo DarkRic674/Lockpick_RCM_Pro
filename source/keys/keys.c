@@ -893,6 +893,24 @@ bool derive_bis_keys_silently() {
     return true;
 }
 
+// Helper function to get eMMC ID (hex string from CID serial, matching Hekate format)
+static bool get_emmc_id(char *emmc_id_out) {
+    // Initialize eMMC if not already done
+    if (!emmc_storage.initialized && emummc_storage_init_mmc()) {
+        return false;
+    }
+
+    // Convert CID serial to hexadecimal string (without leading zeros, like Hekate)
+    s_printf(emmc_id_out, "%x", emmc_storage.cid.serial);
+
+    return true;
+}
+
+// External wrapper for get_emmc_id (callable from other files)
+bool get_emmc_id_external(char *emmc_id_out) {
+    return get_emmc_id(emmc_id_out);
+}
+
 void dump_prodinfo_after_keys() {
     gfx_printf("\n%kDumping PRODINFO partition...\n", COLOR_CYAN_L);
 
@@ -907,6 +925,107 @@ void dump_prodinfo_after_keys() {
         gfx_printf("%kFailed to initialize eMMC!\n", COLOR_ERROR);
         sd_end();
         return;
+    }
+
+    // Get eMMC ID for folder structure
+    char emmc_id[9] = {0};  // 8 hex chars + null terminator
+    if (!get_emmc_id(emmc_id)) {
+        gfx_printf("%kFailed to get eMMC ID!\n", COLOR_ERROR);
+        sd_end();
+        return;
+    }
+
+    gfx_printf("%kDevice ID: %s\n", COLOR_CYAN_L, emmc_id);
+
+    // Create folder structure: backup/[emmcID]/partitions/ and backup/[emmcID]/dumps/
+    char base_path[64];
+    char partitions_path[80];
+    char dumps_path[80];
+
+    s_printf(base_path, "sd:/backup/%s", emmc_id);
+    s_printf(partitions_path, "%s/partitions", base_path);
+    s_printf(dumps_path, "%s/dumps", base_path);
+
+    // Create directories
+    f_mkdir("sd:/backup");
+    f_mkdir(base_path);
+    f_mkdir(partitions_path);
+    f_mkdir(dumps_path);
+
+    // Check for old backups and offer to migrate
+    FIL fp_test;
+    bool has_old_dec = (f_open(&fp_test, "sd:/switch/prodinfo.dec", FA_READ) == FR_OK);
+    if (has_old_dec) f_close(&fp_test);
+
+    bool has_old_enc = (f_open(&fp_test, "sd:/switch/prodinfo.enc", FA_READ) == FR_OK);
+    if (has_old_enc) f_close(&fp_test);
+
+    if (has_old_dec || has_old_enc) {
+        gfx_printf("\n%kOld PRODINFO backups detected in /switch/\n", COLOR_CYAN_L);
+        gfx_printf("%kMigrating to new structure...\n", COLOR_TURQUOISE);
+
+        // Copy old files to new location
+        if (has_old_dec) {
+            char old_dec[] = "sd:/switch/prodinfo.dec";
+            char new_dec[96];
+            s_printf(new_dec, "%s/prodinfo.dec", dumps_path);
+
+            if (f_open(&fp_test, old_dec, FA_READ) == FR_OK) {
+                u32 old_size = f_size(&fp_test);
+                u8 *temp_buf = (u8 *)malloc(old_size);
+                if (temp_buf) {
+                    UINT br;
+                    f_read(&fp_test, temp_buf, old_size, &br);
+                    f_close(&fp_test);
+
+                    FIL fp_new;
+                    if (f_open(&fp_new, new_dec, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
+                        UINT bw;
+                        f_write(&fp_new, temp_buf, old_size, &bw);
+                        f_close(&fp_new);
+                        gfx_printf("%k  Copied prodinfo.dec\n", COLOR_GREENISH);
+                    }
+                    free(temp_buf);
+                }
+            }
+        }
+
+        if (has_old_enc) {
+            char old_enc[] = "sd:/switch/prodinfo.enc";
+            char new_enc[96];
+            s_printf(new_enc, "%s/prodinfo.enc", dumps_path);
+
+            if (f_open(&fp_test, old_enc, FA_READ) == FR_OK) {
+                u32 old_size = f_size(&fp_test);
+                u8 *temp_buf = (u8 *)malloc(old_size);
+                if (temp_buf) {
+                    UINT br;
+                    f_read(&fp_test, temp_buf, old_size, &br);
+                    f_close(&fp_test);
+
+                    FIL fp_new;
+                    if (f_open(&fp_new, new_enc, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
+                        UINT bw;
+                        f_write(&fp_new, temp_buf, old_size, &bw);
+                        f_close(&fp_new);
+                        gfx_printf("%k  Copied prodinfo.enc\n", COLOR_GREENISH);
+
+                        // Also copy to partitions/PRODINFO
+                        char hekate[96];
+                        s_printf(hekate, "%s/PRODINFO", partitions_path);
+                        FIL fp_hekate;
+                        if (f_open(&fp_hekate, hekate, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
+                            f_write(&fp_hekate, temp_buf, old_size, &bw);
+                            f_close(&fp_hekate);
+                            gfx_printf("%k  Created Hekate backup\n", COLOR_GREENISH);
+                        }
+                    }
+                    free(temp_buf);
+                }
+            }
+        }
+
+        gfx_printf("%kMigration complete! Old files kept for safety.\n\n", COLOR_CYAN_L);
     }
 
     // Set to GPP partition to parse GPT
@@ -945,10 +1064,13 @@ void dump_prodinfo_after_keys() {
         return;
     }
 
-    // Dump decrypted PRODINFO
-    gfx_printf("%kDumping decrypted PRODINFO to prodinfo.dec...\n", COLOR_TURQUOISE);
+    // Dump decrypted PRODINFO to dumps folder
+    char dec_path[96];
+    s_printf(dec_path, "%s/prodinfo.dec", dumps_path);
+
+    gfx_printf("%kDumping decrypted PRODINFO...\n", COLOR_TURQUOISE);
     FIL fp_dec;
-    if (f_open(&fp_dec, "sd:/switch/prodinfo.dec", FA_CREATE_ALWAYS | FA_WRITE)) {
+    if (f_open(&fp_dec, dec_path, FA_CREATE_ALWAYS | FA_WRITE)) {
         gfx_printf("%kFailed to create prodinfo.dec!\n", COLOR_ERROR);
         free(buffer);
         nx_emmc_gpt_free(&gpt);
@@ -984,10 +1106,15 @@ void dump_prodinfo_after_keys() {
         gfx_printf("%kDecrypted PRODINFO saved successfully!\n", COLOR_GREENISH);
     }
 
-    // Dump encrypted PRODINFO (read directly from eMMC without BIS decryption)
-    gfx_printf("%kDumping encrypted PRODINFO to prodinfo.enc...\n", COLOR_TURQUOISE);
+    // Dump encrypted PRODINFO to both dumps and partitions folders
+    char enc_path[96];
+    char hekate_path[96];
+    s_printf(enc_path, "%s/prodinfo.enc", dumps_path);
+    s_printf(hekate_path, "%s/PRODINFO", partitions_path);
+
+    gfx_printf("%kDumping encrypted PRODINFO...\n", COLOR_TURQUOISE);
     FIL fp_enc;
-    if (f_open(&fp_enc, "sd:/switch/prodinfo.enc", FA_CREATE_ALWAYS | FA_WRITE)) {
+    if (f_open(&fp_enc, enc_path, FA_CREATE_ALWAYS | FA_WRITE)) {
         gfx_printf("%kFailed to create prodinfo.enc!\n", COLOR_ERROR);
         free(buffer);
         nx_emmc_gpt_free(&gpt);
@@ -1021,7 +1148,39 @@ void dump_prodinfo_after_keys() {
 
     if (sectors_read == partition_sectors) {
         gfx_printf("%kEncrypted PRODINFO saved successfully!\n", COLOR_GREENISH);
+
+        // Also copy encrypted version to partitions/PRODINFO (Hekate-compatible location)
+        gfx_printf("%kCreating Hekate-compatible backup...\n", COLOR_TURQUOISE);
+
+        FIL fp_src, fp_dst;
+        if (f_open(&fp_src, enc_path, FA_READ) == FR_OK) {
+            if (f_open(&fp_dst, hekate_path, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
+                // Copy in chunks
+                u32 bytes_remaining = partition_size;
+                while (bytes_remaining > 0) {
+                    u32 bytes_to_copy = MIN(buf_size, bytes_remaining);
+                    UINT bytes_read, bytes_written;
+
+                    if (f_read(&fp_src, buffer, bytes_to_copy, &bytes_read) != FR_OK || bytes_read != bytes_to_copy) {
+                        gfx_printf("%kCopy failed!\n", COLOR_ERROR);
+                        break;
+                    }
+
+                    if (f_write(&fp_dst, buffer, bytes_to_copy, &bytes_written) != FR_OK || bytes_written != bytes_to_copy) {
+                        gfx_printf("%kCopy failed!\n", COLOR_ERROR);
+                        break;
+                    }
+
+                    bytes_remaining -= bytes_to_copy;
+                }
+                f_close(&fp_dst);
+                gfx_printf("%kHekate backup created!\n", COLOR_GREENISH);
+            }
+            f_close(&fp_src);
+        }
     }
+
+    gfx_printf("\n%kPRODINFO backup location: backup/%s/\n", COLOR_CYAN_L, emmc_id);
 
     // Cleanup
     free(buffer);

@@ -23,6 +23,7 @@
 #include <display/di.h>
 #include <gfx_utils.h>
 #include "gfx/tui.h"
+#include "keys/keys.h"
 #include <libs/fatfs/ff.h>
 #include <mem/heap.h>
 #include <mem/minerva.h>
@@ -532,26 +533,84 @@ void restore_prodinfo()
 		goto out_wait;
 	}
 
-	// Check which PRODINFO file exists (prefer decrypted)
+	// Get current device eMMC ID
+	char emmc_id[16] = {0};
+	if (!get_emmc_id_external(emmc_id)) {
+		gfx_printf("%kFailed to get eMMC ID!\n", COLOR_ERROR);
+		goto out;
+	}
+
+	gfx_printf("%kCurrent device ID: %s\n\n", COLOR_CYAN_L, emmc_id);
+
+	// Build paths for new folder structure
+	char hekate_path[80];
+	char enc_path[80];
+	char dec_path[80];
+	char old_dec_path[] = "sd:/switch/prodinfo.dec";
+	char old_enc_path[] = "sd:/switch/prodinfo.enc";
+
+	s_printf(hekate_path, "sd:/backup/%s/partitions/PRODINFO", emmc_id);
+	s_printf(enc_path, "sd:/backup/%s/dumps/prodinfo.enc", emmc_id);
+	s_printf(dec_path, "sd:/backup/%s/dumps/prodinfo.dec", emmc_id);
+
+	// Check which PRODINFO file exists - priority order
 	FIL fp;
 	bool is_encrypted = false;
+	bool found = false;
+	char found_path[80] = {0};
 
-	// Try decrypted file first (prodinfo.dec)
-	if (f_open(&fp, "sd:/switch/prodinfo.dec", FA_READ) == FR_OK) {
-		is_encrypted = false;
-		gfx_printf("%kFound decrypted PRODINFO backup (prodinfo.dec)\n", COLOR_CYAN_L);
-	}
-	// Fall back to encrypted file (prodinfo.enc)
-	else if (f_open(&fp, "sd:/switch/prodinfo.enc", FA_READ) == FR_OK) {
+	// 1. Check Hekate-compatible location (encrypted, same device)
+	if (f_open(&fp, hekate_path, FA_READ) == FR_OK) {
 		is_encrypted = true;
-		gfx_printf("%kFound encrypted PRODINFO backup (prodinfo.enc)\n", COLOR_CYAN_L);
-		gfx_printf("%kWARNING: This file is encrypted and will be written as-is!\n", COLOR_WARNING);
-		gfx_printf("%kMake sure this came from the same console!\n\n", COLOR_WARNING);
+		found = true;
+		strcpy(found_path, hekate_path);
+		gfx_printf("%kFound PRODINFO backup: partitions/PRODINFO\n", COLOR_GREENISH);
+		gfx_printf("%kSource device: %s (MATCH)\n\n", COLOR_GREENISH, emmc_id);
 	}
-	// No backup found
-	else {
-		gfx_printf("%kNo PRODINFO backup found!\n", COLOR_ERROR);
-		gfx_printf("%kLooking for: prodinfo.dec or prodinfo.enc\n", COLOR_SOFT_WHITE);
+	// 2. Check new decrypted location (same device)
+	else if (f_open(&fp, dec_path, FA_READ) == FR_OK) {
+		is_encrypted = false;
+		found = true;
+		strcpy(found_path, dec_path);
+		gfx_printf("%kFound PRODINFO backup: dumps/prodinfo.dec\n", COLOR_GREENISH);
+		gfx_printf("%kSource device: %s (MATCH)\n\n", COLOR_GREENISH, emmc_id);
+	}
+	// 3. Check new encrypted location (same device)
+	else if (f_open(&fp, enc_path, FA_READ) == FR_OK) {
+		is_encrypted = true;
+		found = true;
+		strcpy(found_path, enc_path);
+		gfx_printf("%kFound PRODINFO backup: dumps/prodinfo.enc\n", COLOR_GREENISH);
+		gfx_printf("%kSource device: %s (MATCH)\n\n", COLOR_GREENISH, emmc_id);
+	}
+	// 4. Fall back to old location - decrypted (backward compatibility)
+	else if (f_open(&fp, old_dec_path, FA_READ) == FR_OK) {
+		is_encrypted = false;
+		found = true;
+		strcpy(found_path, old_dec_path);
+		gfx_printf("%kFound old backup: /switch/prodinfo.dec\n", COLOR_WARNING);
+		gfx_printf("%kWARNING: Cannot verify source device!\n", COLOR_WARNING);
+		gfx_printf("%kMake sure this is from THIS device!\n\n", COLOR_WARNING);
+	}
+	// 5. Fall back to old location - encrypted (backward compatibility)
+	else if (f_open(&fp, old_enc_path, FA_READ) == FR_OK) {
+		is_encrypted = true;
+		found = true;
+		strcpy(found_path, old_enc_path);
+		gfx_printf("%kFound old backup: /switch/prodinfo.enc\n", COLOR_WARNING);
+		gfx_printf("%kWARNING: Cannot verify source device!\n", COLOR_WARNING);
+		gfx_printf("%kMake sure this is from THIS device!\n\n", COLOR_WARNING);
+	}
+
+	// No backup found anywhere
+	if (!found) {
+		gfx_printf("%kNo PRODINFO backup found!\n\n", COLOR_ERROR);
+		gfx_printf("%kChecked locations:\n", COLOR_SOFT_WHITE);
+		gfx_printf(" - backup/%s/partitions/PRODINFO\n", emmc_id);
+		gfx_printf(" - backup/%s/dumps/prodinfo.dec\n", emmc_id);
+		gfx_printf(" - backup/%s/dumps/prodinfo.enc\n", emmc_id);
+		gfx_printf(" - /switch/prodinfo.dec (old)\n");
+		gfx_printf(" - /switch/prodinfo.enc (old)\n\n");
 		gfx_printf("%kPlease dump PRODINFO first!\n", COLOR_SOFT_WHITE);
 		goto out;
 	}
