@@ -24,26 +24,15 @@ jobs:
           apt-get update
           apt-get install -y build-essential git zip
 
-      - name: Get latest version and compute next tag
+      - name: Get version from Versions.inc
         id: version
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-          git remote remove origin || true
-          git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          git fetch --tags
-
-          last_tag=$(git tag --list "1.9.*" --sort=-v:refname | head -n1)
-
-          if [ -z "$last_tag" ]; then
-            version="1.9.15"
-          else
-            major=$(echo "$last_tag" | cut -d. -f1)
-            minor=$(echo "$last_tag" | cut -d. -f2)
-            patch=$(echo "$last_tag" | cut -d. -f3)
-            next_patch=$((patch + 1))
-            version="$major.$minor.$next_patch"
-          fi
+          major=$(grep "LPVERSION_MAJOR" Versions.inc | sed 's/.*:= //')
+          minor=$(grep "LPVERSION_MINOR" Versions.inc | sed 's/.*:= //')
+          patch=$(grep "LPVERSION_BUGFX" Versions.inc | sed 's/.*:= //')
+          version="$major.$minor.$patch"
 
           echo "version=$version" >> $GITHUB_OUTPUT
 
