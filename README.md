@@ -123,11 +123,3 @@ This project builds upon the excellent work of:
 ## Disclaimer
 
 This tool is for educational and backup purposes only. Always keep your PRODINFO backups in a safe location. The authors are not responsible for any damage or data loss. 
-
-## Support My Work
-
-If you find this project useful, please consider supporting me by buying me a coffee!
-
-<a href="https://www.buymeacoffee.com/sthetixofficial" target="_blank">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" >
-</a>
