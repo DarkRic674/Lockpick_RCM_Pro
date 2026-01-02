@@ -115,7 +115,7 @@ Lockpick_RCM is licensed under the **GPLv2**. The save processing module is adap
 ## Credits and Attribution
 
 This project builds upon the excellent work of:
-- **[sthetix](https://github.com/sthetix/Lockpick_RCM_Pro)** - Lockpick_RCMaster base
+- **[sthetix](https://github.com/sthetix/Lockpick_RCM_Pro)** - Lockpick_RCM Pro base
 - **[THZoria](https://github.com/THZoria/Lockpick_RCMaster)** - Lockpick_RCMaster base
 - **[shchmue](https://github.com/shchmue)** - Original Lockpick_RCM
 - **[CTCaer](https://github.com/CTCaer/hekate)** - Hekate bootloader and libraries
